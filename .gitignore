@@ -1,0 +1,25 @@
+# Arquivos de ambiente
+.env
+
+# Arquivos temporários
+*.pyc
+__pycache__/
+*.log
+
+# Diretórios do PyInstaller
+dist/
+build/
+*.spec
+
+# Ambientes virtuais
+.venv_influ
+venv_influ
+.venv_influ/
+.env/
+virtualenv/
+.venv/
+
+# Arquivos Excel e relatórios gerados
+*.xlsx
+*.csv
+venv_influ
