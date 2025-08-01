@@ -1,20 +1,22 @@
 import requests
 import os
-from dotenv import load_dotenv
 import pandas as pd
+from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import tkinter as tk
 from tkinter import messagebox
 from tkcalendar import Calendar
-from datetime import datetime
+from datetime import datetime,timezone, timedelta
 import openpyxl
 import threading
+
 
 # Carrega variáveis de ambiente
 load_dotenv()
 TOKEN = os.getenv("NUVEMSHOP_TOKEN")
 USER_ID = os.getenv("NUVEMSHOP_USER_ID")
+
 
 BASE_URL = f"https://api.tiendanube.com/v1/{USER_ID}/orders"
 HEADERS = {
@@ -30,59 +32,105 @@ adapter = HTTPAdapter(max_retries=retries)
 session.mount('https://', adapter)
 
 
+
+
+CUPONS_PERMITIDOS = {
+    "LISBELLA", "DUDAMILLER", "TOZETTO", "LARISSA", "ANGEL", "MANUCUNHA",
+    "CAMSTM", "TRIZ", "DUDADALLA", "MDM", "BELLASARDI", "GIRLBLOGGER",
+    "SOPHIALUZ", "LARAF", "LARAB", "NANDA", "ZWISOCA", "LAURA", "MAVINAKA",
+    "GABISOARES", "CLARISSA", "LARILODI", "GIOAGUILERA", "MARIRODRIGUES",
+    "HELOYOHANA", "LARABALIEIRO", "LALAMOUNIER", "GIOLIVEIRA", "JULIASOUTO",
+    "THAISCHAGAS", "NICMARCONDES", "SOPHIAROCHA", "JETISOVEC", "ISAHARAGAO",
+    "RENATASIMAS", "DUDASALERNO", "ALEZAMBELLI", "MADUG", "GABISQ", "ISAMARTE",
+    "MARISALES", "MAYA", "LALOURENCA", "GIMARTINISI", "NATTY"
+}
+
+
+
 def relatorio_cupons(data_inicio, data_fim, status_label, botao_gerar):
     botao_gerar.config(state='disabled')
     status_label.config(text="⏳ Gerando relatório...")
 
-    page = 0
     dados = []
 
     try:
-        while True:
-            params = {
-                "per_page": 200,
-                "page": page,
-                "created_at_min": f"{data_inicio}T00:00:00-03:00",
-                "created_at_max": f"{data_fim}T23:59:59-03:00",
-                "payment_status": "paid"
-            }
+        # Converte datas de string para datetime e ajusta para UTC
+        inicio_local = datetime.strptime(data_inicio, "%Y-%m-%d")
+        fim_local = datetime.strptime(data_fim, "%Y-%m-%d")
 
-            response = session.get(BASE_URL, headers=HEADERS, params=params, timeout=30)
-            if response.status_code != 200:
-                status_label.config(text=f"❌ Erro {response.status_code}: {response.text}")
-                break
+        # Define UTC−3 (fuso de Brasília)
+        fuso_brasilia = timezone(timedelta(hours=-3))
 
-            pedidos = response.json()
-            if not pedidos:
-                break
+        # Adiciona horários fixos (00:00:00 e 23:59:59) e fuso de Brasília
+        inicio_brasilia = datetime.combine(inicio_local, datetime.min.time(), tzinfo=fuso_brasilia)
+        fim_brasilia = datetime.combine(fim_local, datetime.max.time().replace(microsecond=0), tzinfo=fuso_brasilia)
 
-            for pedido in pedidos:
-                cupons = pedido.get('coupon', [])
-                valor_pedido = float(pedido.get('subtotal')) - float(pedido.get('discount'))
+        # Converte para UTC
+        inicio_utc = inicio_brasilia.astimezone(timezone.utc)
+        fim_utc = fim_brasilia.astimezone(timezone.utc)
 
-                if cupons:
-                    c = cupons[0]
-                    dados.append({
-                        'codigo_cupom': c.get('code'),
-                        'valor': valor_pedido
-                    })
+        for tipo in ["open", "closed"]:
+            page = 0
+            while True:
+                params = {
+                    "per_page": 200,
+                    "page": page,
+                    "created_at_min": inicio_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    "created_at_max": fim_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    "payment_status": "paid",
+                    "status": tipo
+                }
+                print(params)
 
-            if len(pedidos) < 200:
-                break
-            page += 1
+                response = session.get(BASE_URL, headers=HEADERS, params=params, timeout=30)
+                if response.status_code != 200:
+                    status_label.config(text=f"❌ Erro {response.status_code}: {response.text}")
+                    break
 
+                pedidos = response.json()
+                if not pedidos:
+                    break
+
+                for pedido in pedidos:
+                    created_at = pedido.get('created_at')
+                    created_at_dt = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%S%z")
+                    if not (inicio_utc <= created_at_dt <= fim_utc):
+                        continue
+
+                    cupons = pedido.get('coupon', [])
+                    valor_pedido = float(pedido.get('subtotal')) - float(pedido.get('discount'))
+
+                    if cupons:
+                        c = cupons[0]
+                        codigo = c.get('code')
+                        if codigo and (codigo.endswith("10") or codigo in CUPONS_PERMITIDOS):
+                            dados.append({
+                                'codigo_cupom': codigo,
+                                'valor': valor_pedido,
+                                'id': pedido.get('number') or pedido.get('id')  # segurança
+                            })
+
+                if len(pedidos) < 200:
+                    break
+                page += 1
+
+        # Fora do loop de tipo
         if not dados:
             status_label.config(text="⚠️ Nenhum cupom encontrado no período.")
         else:
             df = pd.DataFrame(dados)
+            df = df.drop_duplicates(subset='id')
+            df.drop(columns=['id'], inplace=True)
+
             agrupado = df.groupby('codigo_cupom').agg(
                 valor_total=('valor', 'sum'),
                 vezes_usado=('valor', 'count')
             ).reset_index().sort_values(by='valor_total', ascending=False)
 
-            nome_arquivo = f"cupons_dia_{data_inicio}.xlsx"
+            # Nome único para evitar erro de permissão
+            nome_arquivo = f"cupons_dia_{data_inicio}_{datetime.now().strftime('%H%M%S')}.xlsx"
             agrupado.to_excel(nome_arquivo, index=False, engine='openpyxl')
-            
+
             status_label.config(text=f"✅ Arquivo '{nome_arquivo}' salvo com sucesso.")
 
     except Exception as e:
