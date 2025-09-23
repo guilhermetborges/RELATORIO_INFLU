@@ -14,8 +14,8 @@ import threading
 
 # Carrega variáveis de ambiente
 load_dotenv()
-TOKEN = os.getenv("NUVEMSHOP_TOKEN")
-USER_ID = os.getenv("NUVEMSHOP_USER_ID")
+TOKEN ="275d4850c805cf33365d2c7b6e20ca5f07c22479"
+USER_ID =1896879
 
 
 BASE_URL = f"https://api.tiendanube.com/v1/{USER_ID}/orders"
@@ -76,7 +76,7 @@ def relatorio_cupons(data_inicio, data_fim, status_label, botao_gerar):
         fim_utc = fim_brasilia.astimezone(timezone.utc)
 
         for tipo in ["open", "closed"]:
-            page = 0
+            page = 1
             while True:
                 params = {
                     "per_page": 200,
@@ -118,6 +118,7 @@ def relatorio_cupons(data_inicio, data_fim, status_label, botao_gerar):
 
                 if len(pedidos) < 200:
                     break
+                print(f"pagina: {page}")
                 page += 1
 
         # Fora do loop de tipo
